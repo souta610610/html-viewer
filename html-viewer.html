@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#e8ecf1">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>HTML Viewer</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <style>
+    /* ==================== テーマ変数 ==================== */
+    /* UI（ヘッダー）の配色は MD Viewer と同じ紺色系で固定する。
+       表示する HTML の配色はその HTML 自身に任せるので、アプリ側のテーマ切替は持たない。
+       HTML が無いとき（ようこそ画面）の背景だけ端末のライト/ダーク設定に追従させる。 */
+    :root {
+      --ui-bg: #1f2733;
+      --ui-bg-soft: #2a3340;
+      --ui-border: #3a4757;
+      --ui-text: #c3ccd8;
+      --ui-text-dim: #8a96a5;
+      --ui-hover-bg: #3a4757;
+      --ui-hover-text: #fff;
+      --ui-active-bg: #4a5666;
+      --accent: #e0506e;
+      --open: #2e8b57;
+      --open-text: #eafff1;
+      --open-hover: #36a368;
+
+      --bg: #faf8f5;
+      --fg: #2b2b2b;
+      --fg-soft: #555;
+      --fg-faint: #8a8a86;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1e1e1e;
+        --fg: #d8d8d2;
+        --fg-soft: #b0b0aa;
+        --fg-faint: #807d77;
+      }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    [hidden] { display: none !important; }
+
+    /* ==================== ヘッダー ==================== */
+    .header {
+      display: flex;
+      align-items: center;
+      background: var(--ui-bg);
+      border-bottom: 1px solid var(--ui-border);
+      min-height: 42px;
+    }
+
+    .tab-bar {
+      display: flex;
+      flex: 1;
+      overflow-x: auto;
+      min-height: 42px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .tab-bar::-webkit-scrollbar { height: 4px; }
+    .tab-bar::-webkit-scrollbar-thumb { background: var(--ui-border); border-radius: 2px; }
+
+    .file-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      background: transparent;
+      border: none;
+      border-right: 1px solid var(--ui-border);
+      color: var(--ui-text-dim);
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      min-width: 120px;
+      max-width: 200px;
+      height: 42px;
+    }
+
+    .file-tab:hover { background: var(--ui-bg-soft); color: var(--ui-text); }
+
+    /* ドラッグ並び替え中のタブ */
+    .file-tab.dragging {
+      opacity: 0.55;
+      background: var(--ui-bg-soft);
+      color: var(--ui-text);
+    }
+    .tab-bar.reordering { user-select: none; -webkit-user-select: none; }
+
+    .file-tab.active {
+      background: var(--ui-active-bg);
+      color: var(--ui-hover-text);
+      border-bottom: 2px solid var(--accent);
+    }
+
+    .tab-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: left;
+      pointer-events: none;
+    }
+
+    .tab-name-input {
+      flex: 1;
+      background: var(--ui-bg);
+      border: 1px solid var(--accent);
+      color: var(--ui-hover-text);
+      padding: 2px 4px;
+      font-size: 13px;
+      border-radius: 3px;
+      outline: none;
+      width: 100%;
+    }
+
+    .tab-close {
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 1;
+      opacity: 0.5;
+      background: transparent;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .tab-close:hover { opacity: 1; background: var(--accent); color: #fff; }
+
+    .mode-switcher {
+      display: flex;
+      gap: 4px;
+      padding: 0 12px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .mode-btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 5px;
+      background: var(--ui-bg-soft);
+      color: var(--ui-text-dim);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+
+    .mode-btn:hover { background: var(--ui-hover-bg); color: var(--ui-hover-text); }
+    .mode-btn.active { background: var(--accent); color: #fff; }
+    #openBtn { background: var(--open); color: var(--open-text); }
+    #openBtn:hover { background: var(--open-hover); color: #fff; }
+
+    #fileInput { display: none; }
+
+    /* ==================== 表示エリア ==================== */
+    .content {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* 表示する HTML（1 タブ = 1 iframe。開いたタブは切替後も状態を保持する） */
+    .doc-frame {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #fff;
+      transform-origin: 0 0;
+    }
+
+    .doc-frame.hidden { display: none; }
+
+    /* ようこそ画面（タブが無いとき） */
+    .welcome {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 24px;
+      text-align: center;
+      color: var(--fg-faint);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .welcome-text { max-width: 22em; }
+    .welcome strong { color: var(--fg-soft); font-size: 17px; }
+
+    .welcome-open {
+      padding: 14px 28px;
+      border: none;
+      border-radius: 8px;
+      background: var(--open);
+      color: var(--open-text);
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .welcome-open:hover { background: var(--open-hover); color: #fff; }
+
+    /* 全画面（ヘッダー非表示）モード */
+    body.immersive .header { display: none; }
+
+    .exit-immersive {
+      display: none;
+      position: fixed;
+      right: calc(12px + env(safe-area-inset-right));
+      bottom: calc(12px + env(safe-area-inset-bottom));
+      z-index: 40;
+      width: 44px;
+      height: 44px;
+      border: none;
+      border-radius: 50%;
+      background: var(--ui-bg);
+      color: var(--ui-text);
+      font-size: 18px;
+      opacity: 0.55;
+      box-shadow: 0 2px 10px rgba(0,0,0,.35);
+      cursor: pointer;
+    }
+
+    .exit-immersive:hover { opacity: 1; }
+    body.immersive .exit-immersive { display: block; }
+
+    /* 通知 */
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(24px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 50;
+      max-width: calc(100vw - 32px);
+      padding: 10px 16px;
+      border-radius: 8px;
+      background: var(--ui-bg);
+      color: var(--ui-hover-text);
+      font-size: 13px;
+      line-height: 1.5;
+      box-shadow: 0 4px 16px rgba(0,0,0,.35);
+      word-break: break-all;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .2s ease;
+    }
+
+    .toast.show { opacity: 1; }
+
+    /* ==================== スマホ向け調整 ==================== */
+    @media (max-width: 600px) {
+      .header { min-height: 46px; }
+      .file-tab { min-width: 84px; max-width: 150px; font-size: 12px; padding: 0 8px; }
+      .mode-switcher { padding: 0 6px; gap: 4px; }
+      .mode-btn { padding: 9px 10px; font-size: 14px; }
+      .btn-label { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="tab-bar" id="tabBar"></div>
+    <div class="mode-switcher">
+      <button class="mode-btn" id="openBtn" title="ファイルを開く（Google Driveも選べます）">📂 <span class="btn-label">開く</span></button>
+      <button class="mode-btn" id="wideBtn" title="PC幅で表示（スマホ非対応のHTML向け）">🖥 <span class="btn-label">PC幅</span></button>
+      <button class="mode-btn" id="reloadBtn" title="再読み込み（スクリプトを最初から実行し直す）">⟳ <span class="btn-label">再読込</span></button>
+      <button class="mode-btn" id="immersiveBtn" title="全画面（ヘッダーを隠す）">⛶ <span class="btn-label">全画面</span></button>
+    </div>
+  </header>
+  <input type="file" id="fileInput" accept=".html,.htm,text/html" multiple>
+
+  <div class="content" id="content">
+    <div class="welcome" id="welcome" hidden>
+      <div class="welcome-text"><strong>HTML ファイルを開いてください</strong><br>
+        「📂 開く」から選ぶか、ファイルアプリや Google Drive の「共有」で HTML Viewer を選ぶと表示できます</div>
+      <button class="welcome-open" id="welcomeOpenBtn">📂 ファイルを開く</button>
+    </div>
+  </div>
+
+  <button class="exit-immersive" id="exitImmersiveBtn" title="全画面を解除">⛶</button>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ==================== 状態管理 ====================
+    // タブの一覧（名前・並び順・PC幅設定）は localStorage、
+    // HTML 本文は容量が大きくなりがちなので IndexedDB に分けて保存する。
+    const STORAGE_KEY = 'html-viewer-state';
+    const DB_NAME = 'html-viewer';
+    const DOC_STORE = 'docs';
+    const SHARE_CACHE = 'html-viewer-share'; // sw.js と同じ名前
+    const WIDE_WIDTH = 980;   // 「PC幅」表示時の仮想的な画面幅（スマホブラウザの既定値と同じ）
+    const MAX_LIVE_FRAMES = 6; // 状態を保持したまま裏に置いておく iframe の上限
+
+    function generateId() {
+      return 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    }
+
+    function defaultState() {
+      return { activeTabId: null, tabs: [] };
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return defaultState();
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed.tabs)) return defaultState();
+        parsed.tabs = parsed.tabs.filter(t => t && t.id);
+        if (!parsed.tabs.find(t => t.id === parsed.activeTabId)) {
+          parsed.activeTabId = parsed.tabs.length ? parsed.tabs[0].id : null;
+        }
+        return parsed;
+      } catch (e) {
+        console.error('状態の読込に失敗:', e);
+        return defaultState();
+      }
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (e) {
+        console.error('状態の保存に失敗:', e);
+      }
+    }
+
+    let state = loadState();
+
+    function activeTab() {
+      return state.tabs.find(t => t.id === state.activeTabId) || null;
+    }
+
+    // ==================== IndexedDB（HTML 本文の保存先） ====================
+    let dbPromise = null;
+    function openDb() {
+      if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open(DB_NAME, 1);
+          req.onupgradeneeded = () => req.result.createObjectStore(DOC_STORE);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+      return dbPromise;
+    }
+
+    function withStore(mode, fn) {
+      return openDb().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(DOC_STORE, mode);
+        const req = fn(tx.objectStore(DOC_STORE));
+        tx.oncomplete = () => resolve(req ? req.result : undefined);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      }));
+    }
+
+    const docGet = (id) => withStore('readonly', s => s.get(id));
+    const docPut = (id, html) => withStore('readwrite', s => s.put(html, id));
+    const docDelete = (id) => withStore('readwrite', s => s.delete(id));
+
+    // ==================== DOM参照 ====================
+    const tabBar = document.getElementById('tabBar');
+    const openBtn = document.getElementById('openBtn');
+    const wideBtn = document.getElementById('wideBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const immersiveBtn = document.getElementById('immersiveBtn');
+    const exitImmersiveBtn = document.getElementById('exitImmersiveBtn');
+    const fileInput = document.getElementById('fileInput');
+    const content = document.getElementById('content');
+    const welcome = document.getElementById('welcome');
+    const welcomeOpenBtn = document.getElementById('welcomeOpenBtn');
+    const toastEl = document.getElementById('toast');
+
+    let toastTimer = null;
+    function showToast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2800);
+    }
+
+    // ==================== ステータスバー色 ====================
+    // MD Viewer と同じ処理。端末のライト/ダーク設定だけで決め、
+    // 折りたたみ端末の開閉後に Chrome が色を取りこぼす問題に備えて、リサイズ時は <meta> を作り直す。
+    const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function currentThemeColor() {
+      return systemDarkQuery.matches ? '#1f2733' : '#e8ecf1';
+    }
+
+    function updateThemeColor() {
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (!meta) return;
+      meta.setAttribute('content', currentThemeColor());
+    }
+
+    function reinsertThemeColor() {
+      const old = document.querySelector('meta[name="theme-color"]');
+      if (old) old.remove();
+      const meta = document.createElement('meta');
+      meta.name = 'theme-color';
+      meta.content = currentThemeColor();
+      document.head.appendChild(meta);
+    }
+
+    let themeColorReinsertTimer = null;
+    function scheduleThemeColorReinsert() {
+      clearTimeout(themeColorReinsertTimer);
+      themeColorReinsertTimer = setTimeout(reinsertThemeColor, 300);
+    }
+
+    systemDarkQuery.addEventListener('change', updateThemeColor);
+    window.addEventListener('resize', scheduleThemeColorReinsert);
+    window.addEventListener('orientationchange', scheduleThemeColorReinsert);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') scheduleThemeColorReinsert();
+    });
+
+    // ==================== タブ描画 ====================
+    function renderTabs() {
+      tabBar.innerHTML = '';
+      state.tabs.forEach(tab => {
+        const el = document.createElement('div');
+        el.className = 'file-tab' + (tab.id === state.activeTabId ? ' active' : '');
+        el.dataset.tabId = tab.id;
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'tab-name';
+        nameEl.textContent = tab.name;
+        el.appendChild(nameEl);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tab-close';
+        closeBtn.textContent = '×';
+        closeBtn.title = 'タブを閉じる';
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeTab(tab.id);
+        });
+        el.appendChild(closeBtn);
+
+        el.addEventListener('click', () => {
+          if (tabDrag.suppressClick) return; // ドラッグ直後のクリックは無視
+          setActiveTab(tab.id);
+        });
+        el.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          startRename(tab.id, el);
+        });
+        tabBar.appendChild(el);
+      });
+      const act = tabBar.querySelector('.file-tab.active');
+      if (act) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
+    // ==================== タブのドラッグ並び替え ====================
+    // MD Viewer と同じ。タッチは長押し後にドラッグ開始（横スクロールと共存させるため）。
+    const tabDrag = {
+      pointerId: null,
+      el: null,
+      startX: 0,
+      startY: 0,
+      active: false,
+      holdTimer: null,
+      suppressClick: false
+    };
+
+    function tabDragBegin() {
+      if (!tabDrag.el) return;
+      tabDrag.active = true;
+      tabDrag.el.classList.add('dragging');
+      tabBar.classList.add('reordering');
+      try { tabBar.setPointerCapture(tabDrag.pointerId); } catch (e) { /* 無視 */ }
+    }
+
+    function tabDragReset() {
+      clearTimeout(tabDrag.holdTimer);
+      if (tabDrag.el) tabDrag.el.classList.remove('dragging');
+      tabBar.classList.remove('reordering');
+      if (tabDrag.pointerId !== null) {
+        try { tabBar.releasePointerCapture(tabDrag.pointerId); } catch (e) { /* 無視 */ }
+      }
+      tabDrag.pointerId = null;
+      tabDrag.el = null;
+      tabDrag.active = false;
+    }
+
+    function tabDragMoveTo(clientX) {
+      const dragged = tabDrag.el;
+      const others = Array.from(tabBar.querySelectorAll('.file-tab')).filter(el => el !== dragged);
+      let insertIdx = 0;
+      for (const other of others) {
+        const r = other.getBoundingClientRect();
+        if (clientX > r.left + r.width / 2) insertIdx++;
+      }
+      const ref = others[insertIdx] || null;
+      if (dragged.nextSibling !== ref) tabBar.insertBefore(dragged, ref);
+    }
+
+    function tabDragAutoScroll(clientX) {
+      const r = tabBar.getBoundingClientRect();
+      const edge = 32;
+      if (clientX < r.left + edge) tabBar.scrollLeft -= 10;
+      else if (clientX > r.right - edge) tabBar.scrollLeft += 10;
+    }
+
+    function tabDragCommit() {
+      const order = Array.from(tabBar.querySelectorAll('.file-tab')).map(el => el.dataset.tabId);
+      const reordered = order.map(id => state.tabs.find(t => t.id === id)).filter(Boolean);
+      if (reordered.length === state.tabs.length) {
+        const changed = reordered.some((t, i) => t !== state.tabs[i]);
+        state.tabs = reordered;
+        if (changed) saveState();
+      }
+      renderTabs();
+    }
+
+    tabBar.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const el = e.target.closest('.file-tab');
+      if (!el || e.target.closest('.tab-close') || e.target.closest('.tab-name-input')) return;
+      if (state.tabs.length <= 1) return;
+      tabDrag.pointerId = e.pointerId;
+      tabDrag.el = el;
+      tabDrag.startX = e.clientX;
+      tabDrag.startY = e.clientY;
+      tabDrag.active = false;
+      tabDrag.suppressClick = false;
+      clearTimeout(tabDrag.holdTimer);
+      if (e.pointerType !== 'mouse') {
+        tabDrag.holdTimer = setTimeout(() => {
+          if (tabDrag.el === el && !tabDrag.active) {
+            tabDragBegin();
+            if (navigator.vibrate) navigator.vibrate(15);
+          }
+        }, 350);
+      }
+    });
+
+    tabBar.addEventListener('pointermove', (e) => {
+      if (tabDrag.pointerId !== e.pointerId || !tabDrag.el) return;
+      const dx = e.clientX - tabDrag.startX;
+      const dy = e.clientY - tabDrag.startY;
+      if (!tabDrag.active) {
+        if (e.pointerType === 'mouse') {
+          if (Math.abs(dx) > 6) tabDragBegin();
+        } else if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+          tabDragReset();
+        }
+        if (!tabDrag.active) return;
+      }
+      tabDragMoveTo(e.clientX);
+      tabDragAutoScroll(e.clientX);
+    });
+
+    function tabDragEnd(e) {
+      if (tabDrag.pointerId !== e.pointerId) return;
+      const wasActive = tabDrag.active;
+      tabDragReset();
+      if (wasActive) {
+        tabDrag.suppressClick = true;
+        setTimeout(() => { tabDrag.suppressClick = false; }, 0);
+        tabDragCommit();
+      }
+    }
+    tabBar.addEventListener('pointerup', tabDragEnd);
+    tabBar.addEventListener('pointercancel', tabDragEnd);
+
+    tabBar.addEventListener('touchmove', (e) => {
+      if (tabDrag.active) e.preventDefault();
+    }, { passive: false });
+
+    function startRename(tabId, tabEl) {
+      const tab = state.tabs.find(t => t.id === tabId);
+      if (!tab) return;
+      tabEl.innerHTML = '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'tab-name-input';
+      input.value = tab.name;
+      tabEl.appendChild(input);
+      input.focus();
+      input.select();
+
+      const finish = (commit) => {
+        const newName = input.value.trim();
+        if (commit && newName) tab.name = newName;
+        saveState();
+        renderTabs();
+      };
+      input.addEventListener('blur', () => finish(true));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+      });
+    }
+
+    function setActiveTab(id) {
+      if (!state.tabs.find(t => t.id === id)) return;
+      state.activeTabId = id;
+      saveState();
+      renderTabs();
+      showActive();
+    }
+
+    function uniqueName(base) {
+      const root = (base || 'HTML').trim() || 'HTML';
+      let name = root;
+      let i = 2;
+      while (state.tabs.find(t => t.name === name)) {
+        name = root + ' (' + i + ')';
+        i++;
+      }
+      return name;
+    }
+
+    function closeTab(id) {
+      const idx = state.tabs.findIndex(t => t.id === id);
+      if (idx === -1) return;
+      destroyFrame(id);
+      state.tabs.splice(idx, 1);
+      if (state.activeTabId === id) {
+        state.activeTabId = state.tabs.length ? state.tabs[Math.max(0, idx - 1)].id : null;
+      }
+      saveState();
+      docDelete(id).catch(e => console.warn('本文の削除に失敗', e));
+      renderTabs();
+      showActive();
+    }
+
+    // ==================== iframe による表示 ====================
+    // 表示する HTML は sandbox 付き iframe に隔離する。
+    // allow-same-origin は付けない（付けると HTML 内のスクリプトからアプリの保存データや
+    // Service Worker に手が届いてしまうため）。
+    // 読み込みは srcdoc で行う。Blob URL だと sandbox 内から location.hash を変更できず、
+    // ページ内リンクもハッシュを使うスクリプトも動かないため。
+    // srcdoc 側の弱点（href="#..." の基準 URL がアプリ本体になる）は frameShim で吸収する。
+    const SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads';
+
+    // 表示する HTML の先頭に差し込む補助スクリプト（iframe 内で実行される）
+    function frameShim() {
+      // sandbox 内は localStorage / sessionStorage にアクセスすると例外になり、
+      // それを使う HTML が動かなくなるので、メモリ上の代替品に差し替える（再読込で消える）。
+      function memoryStorage() {
+        let data = Object.create(null);
+        return {
+          getItem(k) { k = String(k); return k in data ? data[k] : null; },
+          setItem(k, v) { data[String(k)] = String(v); },
+          removeItem(k) { delete data[String(k)]; },
+          clear() { data = Object.create(null); },
+          key(i) { const ks = Object.keys(data); return i < ks.length ? ks[i] : null; },
+          get length() { return Object.keys(data).length; }
+        };
+      }
+      ['localStorage', 'sessionStorage'].forEach(function (name) {
+        try { void window[name].length; } catch (e) {
+          try { Object.defineProperty(window, name, { value: memoryStorage(), configurable: true }); } catch (e2) { /* 諦める */ }
+        }
+      });
+
+      // リンクの扱い:
+      //   #見出し       → location.hash の変更に置き換える（そのままだと srcdoc の基準 URL である
+      //                   アプリ本体への移動になり、iframe の中にアプリが読み込まれてしまう）
+      //   http(s) 等    → iframe 内で遷移すると戻れなくなるので、外部ブラウザで開く
+      //   相対パス      → 単体の HTML からは解決できないので、開けない旨を通知する
+      document.addEventListener('click', function (e) {
+        if (e.defaultPrevented || e.button !== 0) return;
+        const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+        if (!a) return;
+        const href = (a.getAttribute('href') || '').trim();
+        if (!href || /^javascript:/i.test(href) || a.hasAttribute('download')) return;
+        if (/^(blob|data):/i.test(href)) return;
+        e.preventDefault();
+        if (href.charAt(0) === '#') {
+          if (href === '#' || href === '#top') { window.scrollTo(0, 0); return; }
+          let id = href.slice(1);
+          try { id = decodeURIComponent(id); } catch (e2) { /* そのまま使う */ }
+          if (location.hash !== href) location.hash = href;
+          const target = document.getElementById(id) || document.getElementsByName(id)[0];
+          if (target) target.scrollIntoView();
+          return;
+        }
+        if (/^(https?|mailto|tel):/i.test(href)) {
+          window.open(a.href, '_blank', 'noopener');
+        } else {
+          parent.postMessage({ __htmlViewer: 'toast', message: 'このリンクは開けません（別ファイルへの相対リンク）: ' + href }, '*');
+        }
+      });
+    }
+    const SHIM_TAG = '<script>(' + frameShim.toString() + ')();<\/script>';
+
+    // <head> の直後に補助スクリプトを差し込む。<!DOCTYPE> より前に入れると
+    // 互換モードで描画されてしまうので、head / html / doctype の順に挿入位置を探す。
+    function injectShim(html) {
+      const patterns = [/<head\b[^>]*>/i, /<html\b[^>]*>/i, /^\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>/i];
+      for (const re of patterns) {
+        const m = html.match(re);
+        if (m) {
+          const at = m.index + m[0].length;
+          return html.slice(0, at) + SHIM_TAG + html.slice(at);
+        }
+      }
+      return SHIM_TAG + html;
+    }
+
+    const frames = new Map();   // tabId → iframe
+    const frameLru = [];        // 最近使った順（末尾が最新）
+    const loadingFrames = new Set();
+
+    function missingDocHtml() {
+      return '<!DOCTYPE html><html lang="ja"><head><meta name="viewport" content="width=device-width"></head>' +
+        '<body style="font-family:sans-serif;color:#666;text-align:center;padding:60px 20px;line-height:1.8">' +
+        '<strong>内容が見つかりません</strong><br>このタブの保存データが失われました。<br>「📂 開く」からもう一度読み込んでください。</body></html>';
+    }
+
+    async function createFrame(tab) {
+      let html;
+      try {
+        html = await docGet(tab.id);
+      } catch (e) {
+        console.error('本文の読込に失敗', e);
+      }
+      if (typeof html !== 'string') html = missingDocHtml();
+      if (frames.has(tab.id) || !state.tabs.find(t => t.id === tab.id)) return; // 読込中に閉じられた等
+
+      const frame = document.createElement('iframe');
+      frame.className = 'doc-frame hidden';
+      frame.setAttribute('sandbox', SANDBOX);
+      frame.setAttribute('allow', 'clipboard-write; fullscreen');
+      frame.setAttribute('referrerpolicy', 'no-referrer');
+      frame.title = tab.name;
+      frame.srcdoc = injectShim(html);
+      content.appendChild(frame);
+      frames.set(tab.id, frame);
+      layoutFrame(tab.id);
+    }
+
+    function destroyFrame(id) {
+      const frame = frames.get(id);
+      if (!frame) return;
+      frame.remove();
+      frames.delete(id);
+      const i = frameLru.indexOf(id);
+      if (i !== -1) frameLru.splice(i, 1);
+    }
+
+    function touchFrame(id) {
+      const i = frameLru.indexOf(id);
+      if (i !== -1) frameLru.splice(i, 1);
+      frameLru.push(id);
+      // 上限を超えたら、しばらく見ていないタブの iframe から破棄する（再表示時に読み直し）
+      while (frames.size > MAX_LIVE_FRAMES) {
+        const victim = frameLru.find(fid => fid !== state.activeTabId);
+        if (!victim) break;
+        destroyFrame(victim);
+      }
+    }
+
+    // 「PC幅」のタブは、幅 WIDE_WIDTH の画面として描画してから画面幅に縮小する
+    function layoutFrame(id) {
+      const frame = frames.get(id);
+      const tab = state.tabs.find(t => t.id === id);
+      if (!frame || !tab) return;
+      const cw = content.clientWidth;
+      const ch = content.clientHeight;
+      if (tab.wide && cw > 0 && cw < WIDE_WIDTH) {
+        const scale = cw / WIDE_WIDTH;
+        frame.style.width = WIDE_WIDTH + 'px';
+        frame.style.height = (ch / scale) + 'px';
+        frame.style.transform = 'scale(' + scale + ')';
+      } else {
+        frame.style.width = '';
+        frame.style.height = '';
+        frame.style.transform = '';
+      }
+    }
+
+    function applyVisibility() {
+      const tab = activeTab();
+      frames.forEach((frame, id) => frame.classList.toggle('hidden', !tab || id !== tab.id));
+      welcome.hidden = !!tab;
+      wideBtn.hidden = !tab;
+      reloadBtn.hidden = !tab;
+      immersiveBtn.hidden = !tab;
+      wideBtn.classList.toggle('active', !!(tab && tab.wide));
+      if (!tab) document.body.classList.remove('immersive');
+    }
+
+    async function showActive() {
+      applyVisibility();
+      const tab = activeTab();
+      if (!tab) return;
+      if (!frames.has(tab.id) && !loadingFrames.has(tab.id)) {
+        loadingFrames.add(tab.id);
+        try {
+          await createFrame(tab);
+        } finally {
+          loadingFrames.delete(tab.id);
+        }
+      }
+      if (frames.has(tab.id)) touchFrame(tab.id);
+      applyVisibility(); // 読込待ちの間に別タブへ切り替わっていても正しいものを表示する
+    }
+
+    function reloadActive() {
+      const tab = activeTab();
+      if (!tab) return;
+      destroyFrame(tab.id);
+      showActive();
+    }
+
+    function toggleWide() {
+      const tab = activeTab();
+      if (!tab) return;
+      tab.wide = !tab.wide;
+      saveState();
+      layoutFrame(tab.id);
+      applyVisibility();
+    }
+
+    function setImmersive(on) {
+      document.body.classList.toggle('immersive', on);
+    }
+
+    new ResizeObserver(() => {
+      frames.forEach((frame, id) => layoutFrame(id));
+    }).observe(content);
+
+    // iframe 内の補助スクリプトからの通知
+    window.addEventListener('message', (e) => {
+      const fromOurFrame = Array.from(frames.values()).some(f => f.contentWindow === e.source);
+      if (!fromOurFrame || !e.data || e.data.__htmlViewer !== 'toast') return;
+      showToast(String(e.data.message || ''));
+    });
+
+    // ==================== ファイルを開く ====================
+    // 文字コード判定: BOM → <meta charset> → UTF-8 として正しいか → Shift_JIS の順に試す
+    function decodeHtml(buffer) {
+      const bytes = new Uint8Array(buffer);
+      if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return new TextDecoder('utf-8').decode(bytes);
+      if (bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
+      if (bytes[0] === 0xFE && bytes[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
+      const head = new TextDecoder('windows-1252').decode(bytes.subarray(0, 4096));
+      const m = head.match(/<meta[^>]+charset\s*=\s*["']?\s*([\w.:-]+)/i);
+      if (m) {
+        try { return new TextDecoder(m[1].toLowerCase()).decode(bytes); } catch (e) { /* 未知の文字コード名 */ }
+      }
+      try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch (e) { /* UTF-8 ではない */ }
+      try { return new TextDecoder('shift_jis').decode(bytes); } catch (e) { /* 非対応 */ }
+      return new TextDecoder('utf-8').decode(bytes);
+    }
+
+    function stripExt(filename) {
+      return filename.replace(/\.(html?|xhtml)$/i, '') || filename;
+    }
+
+    let persistRequested = false;
+    function requestPersistentStorage() {
+      // 端末の空き容量が減ったときに保存データを勝手に消されないよう依頼しておく
+      if (persistRequested) return;
+      persistRequested = true;
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().catch(() => {});
+      }
+    }
+
+    // entries: [{ name, buffer }]
+    async function openEntries(entries) {
+      let lastId = null;
+      for (const entry of entries) {
+        const html = decodeHtml(entry.buffer);
+        const tab = { id: generateId(), name: uniqueName(stripExt(entry.name)), wide: false };
+        try {
+          await docPut(tab.id, html);
+        } catch (e) {
+          alert('「' + entry.name + '」を保存できませんでした。\n' + (e && e.message ? e.message : ''));
+          continue;
+        }
+        state.tabs.push(tab);
+        lastId = tab.id;
+      }
+      if (!lastId) return;
+      requestPersistentStorage();
+      state.activeTabId = lastId;
+      saveState();
+      renderTabs();
+      showActive();
+    }
+
+    async function openFiles(fileList) {
+      const entries = [];
+      for (const file of Array.from(fileList)) {
+        try {
+          entries.push({ name: file.name, buffer: await file.arrayBuffer() });
+        } catch (e) {
+          alert('「' + file.name + '」を読み込めませんでした。\n' + (e && e.message ? e.message : ''));
+        }
+      }
+      if (entries.length) await openEntries(entries);
+    }
+
+    // Android の「共有」から受け取ったファイル（sw.js が SHARE_CACHE に置いたもの）を開く
+    async function openSharedFiles() {
+      const params = new URLSearchParams(location.search);
+      if (!params.has('share')) return;
+      history.replaceState(null, '', location.pathname);
+      if (!('caches' in window)) return;
+      try {
+        const cache = await caches.open(SHARE_CACHE);
+        const requests = await cache.keys();
+        const entries = [];
+        for (const req of requests) {
+          const res = await cache.match(req);
+          if (res) {
+            entries.push({
+              name: decodeURIComponent(res.headers.get('X-Filename') || '共有ファイル'),
+              buffer: await res.arrayBuffer()
+            });
+          }
+          await cache.delete(req);
+        }
+        if (entries.length) await openEntries(entries);
+        else showToast('共有されたファイルを受け取れませんでした');
+      } catch (e) {
+        console.error('共有ファイルの読込に失敗', e);
+        showToast('共有されたファイルを受け取れませんでした');
+      }
+    }
+
+    // ==================== イベント結線 ====================
+    openBtn.addEventListener('click', () => fileInput.click());
+    welcomeOpenBtn.addEventListener('click', () => fileInput.click());
+    wideBtn.addEventListener('click', toggleWide);
+    reloadBtn.addEventListener('click', reloadActive);
+    immersiveBtn.addEventListener('click', () => setImmersive(true));
+    exitImmersiveBtn.addEventListener('click', () => setImmersive(false));
+    fileInput.addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (files && files.length) openFiles(files);
+      fileInput.value = '';
+    });
+
+    // ==================== 初期化 ====================
+    function init() {
+      renderTabs();
+      showActive();
+      updateThemeColor();
+      openSharedFiles();
+    }
+
+    init();
+
+    // ==================== PWA: Service Worker 登録 ====================
+    // file:// で開いた場合は登録できないので静かにスキップ
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW登録失敗', e));
+      });
+    }
+  </script>
+</body>
+</html>
